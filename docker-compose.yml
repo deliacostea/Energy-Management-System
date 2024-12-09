@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  reverse-proxy:
+    image: traefik:latest
+    container_name: traefik
+    command:
+      - --api.insecure=true                             # Enable Traefik dashboard
+      - --providers.docker=true                        # Use Docker as the configuration provider
+      - --accesslog=true                               # Enable access logs
+      - --entrypoints.web.address=:80                  # Define HTTP entrypoint
+      - --entrypoints.websecure.address=:443           # Define HTTPS entrypoint
+    ports:
+      - "80:80"                                        # Expose HTTP
+      - "443:443"                                      # Expose HTTPS
+      - "8080:8080"                                    # Expose Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock      # Allow Traefik to access Docker
+    networks:
+      - app-network
+
+  frontend:
+    build:
+      context: ./frontend-sd
+      dockerfile: Dockerfile
+    labels:
+      - "traefik.enable=true"                                 # Enable Traefik routing
+      - "traefik.http.routers.frontend.rule=Host(`frontend.localhost`)"  # Match by hostname
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"   # Target service port
+    networks:
+      - app-network
+    depends_on:
+      - user
+      - device
+
+  user:
+    build:
+      context: ./ProiectSD
+      dockerfile: Dockerfile
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.user.rule=Host(`user.localhost`)"
+      - "traefik.http.services.user.loadbalancer.server.port=8081"
+    networks:
+      - app-network
+
+  device:
+    build:
+      context: ./devices
+      dockerfile: Dockerfile
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.device.rule=Host(`device.localhost`)"
+      - "traefik.http.services.device.loadbalancer.server.port=8080"
+    networks:
+      - app-network
+    depends_on:
+      - postgres_devices
+    environment:
+      - SPRING_RABBITMQ_HOST=host.docker.internal
+
+  monitoring:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.monitoring.rule=Host(`monitoring.localhost`)"
+      - "traefik.http.services.monitoring.loadbalancer.server.port=8084"
+    networks:
+      - app-network
+    depends_on:
+      - device
+      - postgres_monitoring
+    environment:
+      - SPRING_RABBITMQ_HOST=host.docker.internal
+
+  postgres_users:
+    image: postgres:10.5
+    container_name: postgres_users
+    environment:
+      POSTGRES_DB: user
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+    networks:
+      - app-network
+
+  postgres_devices:
+    image: postgres:10.5
+    container_name: postgres_devices
+    environment:
+      POSTGRES_DB: device
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+    networks:
+      - app-network
+
+  postgres_monitoring:
+    image: postgres:10.5
+    container_name: postgres_monitoring
+    environment:
+      POSTGRES_DB: monitoring
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
